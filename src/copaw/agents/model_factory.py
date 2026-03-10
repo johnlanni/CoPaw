@@ -29,7 +29,6 @@ except ImportError:  # pragma: no cover - compatibility fallback
     AnthropicChatModel = None
 
 from .utils.tool_message_utils import _sanitize_tool_messages
-from ..local_models import create_local_chat_model
 from ..providers import (
     get_active_llm_config,
     get_chat_model_class,
@@ -302,6 +301,8 @@ def _create_model_instance(
     """
     # Handle local models
     if llm_cfg and llm_cfg.is_local:
+        from ..local_models import create_local_chat_model
+
         model = create_local_chat_model(
             model_id=llm_cfg.model,
             stream=True,

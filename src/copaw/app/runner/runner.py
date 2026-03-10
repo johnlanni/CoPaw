@@ -1,35 +1,16 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument too-many-branches too-many-statements
+#
+# Heavy imports (agentscope, reme, tools, model_factory …) are deferred to
+# the methods that actually need them so that merely importing this module
+# does NOT pull in hundreds of megabytes of transitive dependencies.
 import asyncio
+import gc
 import json
 import logging
 from pathlib import Path
 
-from agentscope.pipeline import stream_printing_messages
-from agentscope.tool import Toolkit
 from agentscope_runtime.engine.runner import Runner
-from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
-from dotenv import load_dotenv
-
-from .command_dispatch import (
-    _get_last_user_text,
-    _is_command,
-    run_command_path,
-)
-from .query_error_dump import write_query_error_dump
-from .session import SafeJSONSession
-from .utils import build_env_context
-from ..channels.schema import DEFAULT_CHANNEL
-from ...agents.memory import MemoryManager
-from ...agents.model_factory import create_model_and_formatter
-from ...agents.react_agent import CoPawAgent
-from ...agents.tools import read_file, write_file, edit_file
-from ...agents.utils.token_counting import _get_token_counter
-from ...config import load_config
-from ...constant import (
-    MEMORY_COMPACT_RATIO,
-    WORKING_DIR,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +21,7 @@ class AgentRunner(Runner):
         self.framework_type = "agentscope"
         self._chat_manager = None  # Store chat_manager reference
         self._mcp_manager = None  # MCP client manager for hot-reload
-        self.memory_manager: MemoryManager | None = None
+        self.memory_manager = None
 
     def set_chat_manager(self, chat_manager):
         """Set chat manager for auto-registration.
@@ -61,12 +42,26 @@ class AgentRunner(Runner):
     async def query_handler(
         self,
         msgs,
-        request: AgentRequest = None,
+        request=None,
         **kwargs,
     ):
         """
         Handle agent query.
         """
+        from agentscope.pipeline import stream_printing_messages
+
+        from .command_dispatch import (
+            _get_last_user_text,
+            _is_command,
+            run_command_path,
+        )
+        from .query_error_dump import write_query_error_dump
+        from .utils import build_env_context
+        from ..channels.schema import DEFAULT_CHANNEL
+        from ...agents.react_agent import CoPawAgent
+        from ...config import load_config
+        from ...constant import WORKING_DIR
+
         # Command path: do not create agent; yield from run_command_path
         query = _get_last_user_text(msgs)
         if query and _is_command(query):
@@ -210,6 +205,17 @@ class AgentRunner(Runner):
         """
         Init handler.
         """
+        from agentscope.tool import Toolkit
+        from dotenv import load_dotenv
+
+        from .session import SafeJSONSession
+        from ...agents.memory import MemoryManager
+        from ...agents.model_factory import create_model_and_formatter
+        from ...agents.tools import read_file, write_file, edit_file
+        from ...agents.utils.token_counting import _get_token_counter
+        from ...config import load_config
+        from ...constant import MEMORY_COMPACT_RATIO, WORKING_DIR
+
         # Load environment variables from .env file
         env_path = Path(__file__).resolve().parents[4] / ".env"
         if env_path.exists():
@@ -255,6 +261,9 @@ class AgentRunner(Runner):
             await self.memory_manager.start()
         except Exception as e:
             logger.exception(f"MemoryManager start failed: {e}")
+
+        collected = gc.collect()
+        logger.debug("gc.collect() after init: freed %d objects", collected)
 
     async def shutdown_handler(self, *args, **kwargs):
         """

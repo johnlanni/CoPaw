@@ -26,17 +26,7 @@ from .skills_manager import (
     get_working_skills_dir,
     list_available_skills,
 )
-from .tools import (
-    browser_use,
-    desktop_screenshot,
-    edit_file,
-    execute_shell_command,
-    get_current_time,
-    read_file,
-    send_file_to_user,
-    write_file,
-    create_memory_search_tool,
-)
+from .tools import create_memory_search_tool
 from .utils import process_file_and_media_blocks_in_message
 from ..agents.memory import MemoryManager
 from ..config import load_config
@@ -165,6 +155,15 @@ class CoPawAgent(ReActAgent):
         Returns:
             Configured toolkit instance
         """
+        from .tools import (
+            edit_file,
+            execute_shell_command,
+            get_current_time,
+            read_file,
+            send_file_to_user,
+            write_file,
+        )
+
         toolkit = Toolkit()
 
         # Register built-in tools
@@ -185,14 +184,6 @@ class CoPawAgent(ReActAgent):
             namesake_strategy=namesake_strategy,
         )
         toolkit.register_tool_function(
-            browser_use,
-            namesake_strategy=namesake_strategy,
-        )
-        toolkit.register_tool_function(
-            desktop_screenshot,
-            namesake_strategy=namesake_strategy,
-        )
-        toolkit.register_tool_function(
             send_file_to_user,
             namesake_strategy=namesake_strategy,
         )
@@ -200,6 +191,21 @@ class CoPawAgent(ReActAgent):
             get_current_time,
             namesake_strategy=namesake_strategy,
         )
+
+        # browser_use and desktop_screenshot are heavyweight (~3 000 lines)
+        # and useless in headless / container environments.  Set
+        # COPAW_HEADLESS=1 to skip loading them and save ~20-30 MB RSS.
+        if not os.getenv("COPAW_HEADLESS"):
+            from .tools import browser_use, desktop_screenshot
+
+            toolkit.register_tool_function(
+                browser_use,
+                namesake_strategy=namesake_strategy,
+            )
+            toolkit.register_tool_function(
+                desktop_screenshot,
+                namesake_strategy=namesake_strategy,
+            )
 
         return toolkit
 
@@ -262,6 +268,8 @@ class CoPawAgent(ReActAgent):
 
         # Register memory_search tool if enabled and available
         if self._enable_memory_manager and self.memory_manager is not None:
+            from .tools import edit_file, read_file, write_file
+
             # update memory manager
             self.memory_manager.chat_model = self.model
             self.memory_manager.formatter = self.formatter
