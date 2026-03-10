@@ -10,7 +10,7 @@ dependencies = [
     "httpx>=0.27.0",
     "uvicorn>=0.40.0",
     "apscheduler>=3.11.2,<4",
-    "reme-ai @ git+https://github.com/johnlanni/ReMe.git@reme-ai-lite",
+    "reme-ai==0.3.0.5",
     "tokenizers>=0.15.0",
     "python-dotenv>=1.0.0",
     "python-socks>=2.5.3",
