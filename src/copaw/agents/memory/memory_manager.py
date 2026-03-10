@@ -10,10 +10,11 @@ Inherits from ReMeCopaw to provide memory management capabilities including:
 """
 import logging
 
+from typing import Any
+
 from agentscope.formatter import FormatterBase
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase
-from agentscope.token import HuggingFaceTokenCounter
 from agentscope.tool import Toolkit
 
 from ...config.utils import load_config
@@ -50,7 +51,7 @@ class MemoryManager(ReMeCopaw):
         working_dir: str,
         chat_model: ChatModelBase,
         formatter: FormatterBase,
-        token_counter: HuggingFaceTokenCounter,
+        token_counter: Any,
         toolkit: Toolkit,
         max_input_length: int,
         memory_compact_ratio: float,

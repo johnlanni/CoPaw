@@ -9,7 +9,19 @@ from pathlib import Path
 from typing import Optional
 
 import click
-import questionary
+
+try:
+    import questionary
+except ImportError:
+    questionary = None  # type: ignore[assignment]
+
+
+def _require_questionary() -> None:
+    if questionary is None:
+        raise ImportError(
+            "questionary is required for interactive prompts. "
+            "Install it with: pip install copaw[cli]"
+        )
 
 
 def prompt_confirm(question: str, *, default: bool = False) -> bool:
@@ -22,6 +34,7 @@ def prompt_confirm(question: str, *, default: bool = False) -> bool:
         ``True`` for *Yes*, ``False`` for *No*.
         Falls back to *default* on Ctrl+C.
     """
+    _require_questionary()
     items = [
         questionary.Choice("Yes", value=True),
         questionary.Choice("No", value=False),
@@ -84,6 +97,7 @@ def prompt_choice(
         The selected string.
         Falls back to *default* (or the first option) on Ctrl+C.
     """
+    _require_questionary()
     items = [questionary.Choice(opt, value=opt) for opt in options]
 
     preselect = None
@@ -127,6 +141,7 @@ def prompt_select(
     Returns:
         The selected *value*, or ``None`` on Ctrl+C.
     """
+    _require_questionary()
     items = [
         questionary.Choice(label, value=value) for label, value in options
     ]
@@ -176,6 +191,8 @@ def prompt_checkbox(
     _SELECT_ALL = "__select_all__"
     all_values = {v for _, v in options}
     current_checked = set(checked or set()) & all_values
+
+    _require_questionary()
 
     while True:
         all_currently_checked = (

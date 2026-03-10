@@ -3,55 +3,149 @@
 
 This module provides token counting functionality for estimating
 message token usage with Qwen tokenizer.
+
+Uses the lightweight ``tokenizers`` library (Rust-based, ~20 MB RSS) instead
+of the full ``transformers`` stack (~200 MB RSS).  The public API is
+unchanged so that MemoryManager / ReMeCopaw / CoPawInMemoryMemory can
+consume the returned counter transparently.
 """
+import json
 import logging
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _token_counter = None
 
 
+# ---------------------------------------------------------------------------
+# Lightweight token counter (drop-in for HuggingFaceTokenCounter)
+# ---------------------------------------------------------------------------
+
+class _AutoTokenizerCompat:
+    """Thin adapter that gives a ``tokenizers.Tokenizer`` the same
+    surface API as ``transformers.AutoTokenizer`` (encode, chat_template,
+    apply_chat_template) so that downstream code (reme, agentscope) keeps
+    working without importing transformers."""
+
+    def __init__(self, raw_tokenizer: Any, chat_template: str = "") -> None:
+        self._tok = raw_tokenizer
+        self.chat_template = chat_template
+
+    def encode(self, text: str, **_kwargs: Any) -> list[int]:
+        return self._tok.encode(text).ids
+
+    def decode(self, ids: list[int], **_kwargs: Any) -> str:
+        return self._tok.decode(ids)
+
+    def apply_chat_template(
+        self,
+        messages: list[dict],
+        tokenize: bool = True,
+        add_generation_prompt: bool = False,
+        **_kwargs: Any,
+    ) -> Any:
+        parts: list[str] = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+            elif isinstance(content, list):
+                text_parts = [
+                    b.get("text", "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("text")
+                ]
+                parts.append(
+                    f"<|im_start|>{role}\n{''.join(text_parts)}<|im_end|>"
+                )
+        if add_generation_prompt:
+            parts.append("<|im_start|>assistant\n")
+        text = "\n".join(parts)
+        if tokenize:
+            return [self._tok.encode(text).ids]
+        return text
+
+
+class LightweightTokenCounter:
+    """Token counter backed by the ``tokenizers`` library.
+
+    API-compatible with ``agentscope.token.HuggingFaceTokenCounter``:
+    * ``.tokenizer.encode(text) -> list[int]``
+    * ``await .count(messages) -> int``
+    """
+
+    def __init__(self, tokenizer_dir: str) -> None:
+        from tokenizers import Tokenizer as _Tokenizer
+
+        json_path = Path(tokenizer_dir) / "tokenizer.json"
+        raw = _Tokenizer.from_file(str(json_path))
+
+        chat_template = ""
+        config_path = Path(tokenizer_dir) / "tokenizer_config.json"
+        if config_path.exists():
+            with open(config_path, encoding="utf-8") as fh:
+                chat_template = json.load(fh).get("chat_template", "")
+
+        self.tokenizer = _AutoTokenizerCompat(raw, chat_template)
+
+    async def count(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        **_kwargs: Any,
+    ) -> int:
+        tokenized = self.tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=False,
+            tokenize=True,
+        )[0]
+        return len(tokenized)
+
+
+# ---------------------------------------------------------------------------
+# Global singleton
+# ---------------------------------------------------------------------------
+
 def _get_token_counter():
     """Get or initialize the global token counter instance.
 
-    Returns:
-        TokenCounterBase: The token counter instance for Qwen models.
-
-    Raises:
-        RuntimeError: If token counter initialization fails.
+    Prefers the bundled Qwen tokenizer files shipped with copaw.  Falls
+    back to ``HuggingFaceTokenCounter`` (which pulls in ``transformers``)
+    only when the local tokenizer is missing.
     """
     global _token_counter
-    if _token_counter is None:
+    if _token_counter is not None:
+        return _token_counter
+
+    local_tokenizer_path = Path(__file__).parent.parent.parent / "tokenizer"
+
+    if (
+        local_tokenizer_path.exists()
+        and (local_tokenizer_path / "tokenizer.json").exists()
+    ):
+        logger.info(
+            "Using lightweight Qwen tokenizer from %s", local_tokenizer_path
+        )
+        _token_counter = LightweightTokenCounter(str(local_tokenizer_path))
+    else:
+        # Fallback: use HuggingFaceTokenCounter (loads transformers)
         from agentscope.token import HuggingFaceTokenCounter
 
-        # Use Qwen tokenizer for DashScope models
-        # Qwen3 series uses the same tokenizer as Qwen2.5
-
-        # Try local tokenizer first, fall back to online if not found
-        local_tokenizer_path = (
-            Path(__file__).parent.parent.parent / "tokenizer"
+        logger.info(
+            "Local tokenizer not found, falling back to "
+            "HuggingFaceTokenCounter (requires transformers)",
         )
-
-        if (
-            local_tokenizer_path.exists()
-            and (local_tokenizer_path / "tokenizer.json").exists()
-        ):
-            tokenizer_path = str(local_tokenizer_path)
-            logger.info(f"Using local Qwen tokenizer from {tokenizer_path}")
-        else:
-            tokenizer_path = "Qwen/Qwen2.5-7B-Instruct"
-            logger.info(
-                "Local tokenizer not found, downloading from HuggingFace",
-            )
-
         _token_counter = HuggingFaceTokenCounter(
-            pretrained_model_name_or_path=tokenizer_path,
-            use_mirror=True,  # Use HF mirror for users in China
+            pretrained_model_name_or_path="Qwen/Qwen2.5-7B-Instruct",
+            use_mirror=True,
             use_fast=True,
             trust_remote_code=True,
         )
-        logger.debug("Token counter initialized with Qwen tokenizer")
+
+    logger.debug("Token counter initialized")
     return _token_counter
 
 
