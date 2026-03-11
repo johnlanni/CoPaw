@@ -10,7 +10,6 @@ import os
 from typing import Any, List, Literal, Optional, Type
 
 from agentscope.agent import ReActAgent
-from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
 from agentscope.tool import Toolkit
@@ -497,6 +496,8 @@ class CoPawAgent(ReActAgent):
         name = rebuild_info.get("name")
 
         try:
+            from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
+
             if transport == "stdio":
                 rebuilt_client = StdIOStatefulClient(
                     name=name,
